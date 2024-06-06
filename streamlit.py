@@ -9,10 +9,11 @@ CLIENT_SECRET = '91eeae97f0721dbe32a37d93100948af876b10ec'
 REDIRECT_URI = 'http://localhost:8501'
 
 # Authorization URL
-AUTHORIZATION_URL = f'https://www.strava.com/oauth/authorize?client_id={CLIENT_ID}' \
-                   f'&response_type=code&redirect_uri={REDIRECT_URI}' \
-                   f'&approval_prompt=force' \
-                   f'&scope=profile:read_all,activity:read_all'
+AUTHORIZATION_URL = (
+    f"https://www.strava.com/oauth/authorize?client_id={CLIENT_ID}"
+    f"&response_type=code&redirect_uri={REDIRECT_URI}"
+    f"&approval_prompt=force&scope=profile:read_all,activity:read_all"
+)
 
 # Create a Streamlit app
 st.title("Strava API App")
@@ -20,9 +21,8 @@ st.write("Please authorize the app by clicking the button below!")
 
 # Step 1: User Authorization
 if st.button('Conectar con Strava'):
-    # Redirigir a la página de autorización de Strava
     auth_url = AUTHORIZATION_URL
-    st.markdown(f'<a href="{auth_url}" target="_blank">Conectar con Strava</a>', unsafe_allow_html=True)
+    st.markdown(f'[Conectar con Strava]({auth_url})', unsafe_allow_html=True)
     st.write('Conectando con Strava...')
 
 # Step 2: Handle redirect and get authorization code
@@ -42,21 +42,13 @@ if code_input:
         'Content-Type': 'application/x-www-form-urlencoded'
     }
 
-    token_response = requests.post(TOKEN_URL, data=TOKEN_DATA, headers=TOKEN_HEADERS)
-    
-    if token_response.status_code == 200:
+    try:
+        token_response = requests.post(TOKEN_URL, data=TOKEN_DATA, headers=TOKEN_HEADERS)
+        token_response.raise_for_status()
         strava_token = token_response.json()
 
-        # Save json response as a variable
-        with open('strava_token.json', 'w') as outfile:
-            json.dump(strava_token, outfile)
-
-        # Read the token from the saved file
-        with open('strava_token.json', 'r') as token:
-            data = json.load(token)
-
         # Get the access token
-        ACCESS_TOKEN = data.get('access_token')
+        ACCESS_TOKEN = strava_token.get('access_token')
 
         if ACCESS_TOKEN:
             # Step 4: Get Activities
@@ -65,6 +57,7 @@ if code_input:
                 'Authorization': f"Bearer {ACCESS_TOKEN}"
             }
             activities_response = requests.get(ACTIVITIES_URL, headers=headers)
+            activities_response.raise_for_status()
             activities = activities_response.json()
 
             if activities:
@@ -72,19 +65,23 @@ if code_input:
                 ACTIVITY_ID = activities[0]['id']
 
                 # Step 5: Get Activity Stream Data
-                STREAM_URL = f"https://www.strava.com/api/v3/activities/{ACTIVITY_ID}/streams" \
-                             f"?types=altitude,time,latlng"
+                STREAM_URL = (
+                    f"https://www.strava.com/api/v3/activities/{ACTIVITY_ID}/streams"
+                    f"?types=altitude,time,latlng"
+                )
                 stream_response = requests.get(STREAM_URL, headers=headers)
+                stream_response.raise_for_status()
                 stream = stream_response.json()
 
                 # Print out the retrieved information
-                st.write('='*5, 'ACTIVITY STREAM', '='*5)
+                st.write('===== ACTIVITY STREAM =====')
                 if stream:
-                    st.write('Type:', stream[0]['type'])
-                    st.write('Data:', stream[0]['data'])
-                    st.write('Series type:', stream[0]['series_type'])
-                    st.write('Original size:', stream[0]['original_size'])
-                    st.write('Resolution:', stream[0]['resolution'])
+                    for data_stream in stream:
+                        st.write(f"Type: {data_stream['type']}")
+                        st.write(f"Data: {data_stream['data']}")
+                        st.write(f"Series type: {data_stream['series_type']}")
+                        st.write(f"Original size: {data_stream['original_size']}")
+                        st.write(f"Resolution: {data_stream['resolution']}")
                 else:
                     st.write('No stream data found for this activity.')
             else:
@@ -92,9 +89,7 @@ if code_input:
         else:
             st.write('Failed to retrieve access token. Please check your credentials and authorization code.')
             st.json(strava_token)  # Display the response for debugging
-    else:
-        st.write('Failed to exchange authorization code for access token.')
-        st.json(token_response.json())  # Display the response for debugging
+    except requests.exceptions.RequestException as e:
+        st.write(f"An error occurred: {e}")
 else:
     st.write("Please authorize the app and then input the code from the URL after redirecting.")
-
