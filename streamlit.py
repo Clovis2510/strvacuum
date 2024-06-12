@@ -1,36 +1,47 @@
 import streamlit as st
 import json
 import requests
-from urllib.parse import urlencode, urlparse, parse_qs
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import os
 
-# Initial Settings
+# Configurar las credenciales de Google Sheets
+def get_gsheet_client():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    # Especifica la ruta completa al archivo 'credentials.json'
+    creds_path = os.path.join(os.path.dirname(__file__), 'credentials.json')
+    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+    client = gspread.authorize(creds)
+    return client
+
+# Inicializar configuración
 CLIENT_ID = '117378'
 CLIENT_SECRET = '91eeae97f0721dbe32a37d93100948af876b10ec'
 REDIRECT_URI = 'http://localhost:8501'
 
-# Authorization URL
+# URL de autorización
 AUTHORIZATION_URL = (
     f"https://www.strava.com/oauth/authorize?client_id={CLIENT_ID}"
     f"&response_type=code&redirect_uri={REDIRECT_URI}"
     f"&approval_prompt=force&scope=profile:read_all,activity:read_all"
 )
 
-# Create a Streamlit app
+# Crear la aplicación en Streamlit
 st.title("Strava API App")
 st.write("Please authorize the app by clicking the button below!")
 
-# Step 1: User Authorization
+# Paso 1: Autorización del usuario
 if st.button('Conectar con Strava'):
     auth_url = AUTHORIZATION_URL
     st.markdown(f'[Conectar con Strava]({auth_url})', unsafe_allow_html=True)
     st.write('Conectando con Strava...')
 
-# Step 2: Handle redirect and get authorization code
+# Paso 2: Manejar redirección y obtener código de autorización
 query_params = st.experimental_get_query_params()
 code_input = query_params.get('code', [None])[0]
 
 if code_input:
-    # Step 3: Exchange the authorization code for an access token
+    # Paso 3: Intercambiar el código de autorización por un token de acceso
     TOKEN_URL = 'https://www.strava.com/api/v3/oauth/token'
     TOKEN_DATA = {
         'client_id': CLIENT_ID,
@@ -47,24 +58,52 @@ if code_input:
         token_response.raise_for_status()
         strava_token = token_response.json()
 
-        # Get the access token
+        # Obtener el token de acceso
         ACCESS_TOKEN = strava_token.get('access_token')
 
         if ACCESS_TOKEN:
-            # Step 4: Get Activities
-            ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
+            # Paso 4: Obtener los datos del perfil del usuario
+            ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
             headers = {
                 'Authorization': f"Bearer {ACCESS_TOKEN}"
             }
+            athlete_response = requests.get(ATHLETE_URL, headers=headers)
+            athlete_response.raise_for_status()
+            athlete = athlete_response.json()
+
+            # Mostrar la información del perfil del usuario
+            st.write('===== USER PROFILE =====')
+            st.json(athlete)
+
+            # Paso 5: Guardar los datos en Google Sheets
+            client = get_gsheet_client()
+            sheet = client.open("StravaUserData").sheet1  # Abrir la hoja de cálculo
+            # Añadir una nueva fila con los datos del usuario y el token
+            sheet.append_row([
+                athlete.get('id'),
+                athlete.get('username'),
+                athlete.get('firstname'),
+                athlete.get('lastname'),
+                athlete.get('city'),
+                athlete.get('state'),
+                athlete.get('country'),
+                athlete.get('sex'),
+                athlete.get('profile'),
+                ACCESS_TOKEN  # Guardar el token de acceso
+            ])
+            st.write('Datos del usuario y token guardados en Google Sheets.')
+
+            # Obtener la actividad más reciente del usuario
+            ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
             activities_response = requests.get(ACTIVITIES_URL, headers=headers)
             activities_response.raise_for_status()
             activities = activities_response.json()
 
             if activities:
-                # Get the id of the first activity
+                # Obtener el id de la primera actividad
                 ACTIVITY_ID = activities[0]['id']
 
-                # Step 5: Get Activity Stream Data
+                # Paso 6: Obtener el flujo de actividad
                 STREAM_URL = (
                     f"https://www.strava.com/api/v3/activities/{ACTIVITY_ID}/streams"
                     f"?types=altitude,time,latlng"
@@ -73,7 +112,7 @@ if code_input:
                 stream_response.raise_for_status()
                 stream = stream_response.json()
 
-                # Print out the retrieved information
+                # Mostrar los datos del flujo de actividad
                 st.write('===== ACTIVITY STREAM =====')
                 if stream:
                     for data_stream in stream:
@@ -86,9 +125,10 @@ if code_input:
                     st.write('No stream data found for this activity.')
             else:
                 st.write('No activities found.')
+
         else:
             st.write('Failed to retrieve access token. Please check your credentials and authorization code.')
-            st.json(strava_token)  # Display the response for debugging
+            st.json(strava_token)  # Mostrar la respuesta para depuración
     except requests.exceptions.RequestException as e:
         st.write(f"An error occurred: {e}")
 else:
